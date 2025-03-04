@@ -1,0 +1,126 @@
+##############################################
+### load modules to process data
+import pyodbc
+import pandas as pd
+import csv
+import getpass
+
+# establish data lake connection
+strPw = getpass.getpass("Password:")
+#strDSN = "LDQA"
+strDSN = "my db connection"
+conn = pyodbc.connect('DSN={};UID={};PWD={}'.format(strDSN,'josepbih',strPw),autocommit=True)
+
+### 
+cursor = conn.cursor()
+    
+# fetch and display filtered output with column names
+cursor.execute(
+    """select """)
+c = (cursor.fetchall())
+for x in range(len(c)):
+        c[x] = list(c[x])
+df=pd.DataFrame(c, columns = [column[0] for column in cursor.description])
+    #print (row)
+cursor.close()
+del cursor
+
+####
+df.tail()
+
+## transpose/pivot
+
+df.info()
+
+#####################################################################################
+# Load up REST API and Hyper API to create Tableau extract
+
+import datetime as dt
+from pathlib import Path
+import tableauserverclient as TSC
+
+from tableauhyperapi import HyperProcess, Telemetry, \
+    Connection, CreateMode, TableName, \
+    NOT_NULLABLE, NULLABLE, SqlType, TableDefinition, \
+    Inserter, \
+    escape_name, escape_string_literal, \
+    HyperException
+
+
+# project variable setups
+hyper_name = 'cTest.hyper'
+server_address = 'https://tableaudvi.sddev.test.com/'
+site_name = 'BIData'
+project_name = 'Default'
+token_name = 'DevToken'
+token_value = '9GkZumbZS.......'
+
+# For more on tokens, head here:
+# https://help.tableau.com/current/server/en-us/security_personal_access_tokens.htm
+
+path_to_database = Path(hyper_name)
+
+# Start a new private local Hyper instance
+with HyperProcess(Telemetry.SEND_USAGE_DATA_TO_TABLEAU, "myapp" ) as hyper:
+
+# Create the the .hyper file, replace it if it already exists
+    with Connection(endpoint=hyper.endpoint, 
+                    create_mode=CreateMode.CREATE_AND_REPLACE,
+                    database=PATH_TO_HYPER) as connection:
+
+# Create the schema
+        connection.catalog.create_schema("Extract")
+
+# Create the table definition
+        schema = TableDefinition(table_name=TableName("Extract","Extract"),
+            columns=[
+            TableDefinition.Column(name='Customer ID', type=SqlType.text(), nullability=NOT_NULLABLE),
+            TableDefinition.Column(name='Customer Name', type=SqlType.text(), nullability=NOT_NULLABLE),
+            TableDefinition.Column(name='Loyalty Reward Points', type=SqlType.big_int(), nullability=NOT_NULLABLE),
+            TableDefinition.Column(name='Segment', type=SqlType.text(), nullability=NOT_NULLABLE)
+            ])
+    
+# Create the table in the connection catalog
+        connection.catalog.create_table(schema)
+    
+        with Inserter(connection, schema) as inserter:
+            for index, row in df.iterrows():
+                inserter.add_row(df.values)
+            inserter.execute()
+
+    print("The connection to the Hyper file is closed.")
+      
+#publish data source
+def publish_hyper():
+    """
+    Shows how to leverage the Tableau Server Client (TSC) to sign in and publish an extract directly to Tableau Online/Server
+    """
+
+    # Sign in to server
+    tableau_auth = TSC.PersonalAccessTokenAuth(token_name="DevToken", personal_access_token="9GkZumbZS.......", site_id="BIData")
+    server = TSC.Server("https://tableaudvi.sddev.test.com", use_server_version=False)
+    server.add_http_options({'verify': False}) # this added per guidance
+        
+    print(f"Signing into {site_name} at {server_address}")
+    with server.auth.sign_in(tableau_auth):
+        # Define publish mode - Overwrite, Append, or CreateNew
+        publish_mode = TSC.Server.PublishMode.Overwrite
+        
+        # Get project_id from project_name
+        all_projects, pagination_item = server.projects.get()
+        for project in TSC.Pager(server.projects):
+            if project.name == project_name:
+                project_id = project.id
+    
+        # Create the datasource object with the project_id
+        datasource = TSC.DatasourceItem(project_id)
+        
+        print(f"Publishing {hyper_name} to {project_name}...")
+        # Publish datasource
+        datasource = server.datasources.publish(datasource, path_to_database, publish_mode)
+        print("Datasource published. Datasource ID: {0}".format(datasource.id))
+
+
+if __name__ == '__main__':
+    insert_data()
+    publish_hyper()
